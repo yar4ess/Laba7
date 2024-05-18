@@ -39,25 +39,55 @@ public class Server {
         System.setProperty("java.util.logging.config.file", propPath);
     }
 
+//    public void start() throws IOException {
+//        logger.info("Starting the server");
+//        ServerSocketChannel serverSocketChannel = ServerSocketChannel.open();
+//        serverSocketChannel.bind(new InetSocketAddress("localhost", port));
+//        while (true) {
+//            logger.info("Waiting for client connection");
+//            SocketChannel clientChannel = serverSocketChannel.accept();
+//            clientsLock.writeLock().lock();
+//            try {
+//                ObjectOutputStream oos = new ObjectOutputStream(clientChannel.socket().getOutputStream());
+//                UserStatusManager userStatusManager = new UserStatusManager(false, "");
+//                clients.put(clientChannel, oos);
+//                users.put(clientChannel, userStatusManager);
+//            } finally {
+//                clientsLock.writeLock().unlock();
+//            }
+//            requestThreadPool.execute(() -> handleClient(clientChannel));
+//        }
+//    }
     public void start() throws IOException {
-        logger.info("Starting the server");
+        logger.info("Запуск сервера");
         ServerSocketChannel serverSocketChannel = ServerSocketChannel.open();
         serverSocketChannel.bind(new InetSocketAddress("localhost", port));
         while (true) {
-            logger.info("Waiting for client connection");
-            SocketChannel clientChannel = serverSocketChannel.accept();
-            clientsLock.writeLock().lock();
-            try {
-                ObjectOutputStream oos = new ObjectOutputStream(clientChannel.socket().getOutputStream());
-                UserStatusManager userStatusManager = new UserStatusManager(false, "");
-                clients.put(clientChannel, oos);
-                users.put(clientChannel, userStatusManager);
-            } finally {
-                clientsLock.writeLock().unlock();
-            }
-            requestThreadPool.execute(() -> handleClient(clientChannel));
+            Thread clientHandlerThread = new Thread(() -> {
+                SocketChannel clientChannel;
+                try {
+                    clientChannel = serverSocketChannel.accept();
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+                clientsLock.writeLock().lock();
+                try {
+                    logger.info("Ожидание подключения клиента");
+                    ObjectOutputStream oos = new ObjectOutputStream(clientChannel.socket().getOutputStream());
+                    UserStatusManager userStatusManager = new UserStatusManager(false, "");
+                    clients.put(clientChannel, oos);
+                    users.put(clientChannel, userStatusManager);
+                } catch (IOException e) {
+                    logger.warning("Ошибка при обработке подключения клиента: " + e.getMessage());
+                } finally {
+                    clientsLock.writeLock().unlock();
+                }
+                requestThreadPool.execute(() -> handleClient(clientChannel));
+            });
+            clientHandlerThread.start();
         }
     }
+
 
     private void handleClient(SocketChannel clientChannel) {
         try {
@@ -134,21 +164,35 @@ public class Server {
         }
     }
 
+//    private void sendResponse(SocketChannel clientChannel, Response response) {
+//        clientsLock.readLock().lock();
+//        try {
+//            ObjectOutputStream oos = clients.get(clientChannel);
+//            responseThreadPool.execute(() -> {
+//                try {
+//                    logger.info("Sending response to client: " + users.get(clientChannel).getUser_name());
+//                    oos.writeObject(response);
+//                    oos.flush();
+//                } catch (IOException e) {
+//                    logger.log(Level.SEVERE, "Error sending response to client: " + users.get(clientChannel).getUser_name() , e);
+//                }
+//            });
+//        } finally {
+//            clientsLock.readLock().unlock();
+//        }
+//    }
     private void sendResponse(SocketChannel clientChannel, Response response) {
-        clientsLock.readLock().lock();
-        try {
+        responseThreadPool.execute(() -> {
+            clientsLock.readLock().lock();
             ObjectOutputStream oos = clients.get(clientChannel);
-            responseThreadPool.execute(() -> {
-                try {
-                    logger.info("Sending response to client: " + users.get(clientChannel).getUser_name());
-                    oos.writeObject(response);
-                    oos.flush();
-                } catch (IOException e) {
-                    logger.log(Level.SEVERE, "Error sending response to client: " + users.get(clientChannel).getUser_name() , e);
-                }
-            });
-        } finally {
+            try {
+                logger.info("Sending response to client: " + users.get(clientChannel).getUser_name());
+                oos.writeObject(response);
+                oos.flush();
+            } catch (IOException e) {
+                logger.log(Level.SEVERE, "Error sending response to client: " + users.get(clientChannel).getUser_name() , e);
+            }
             clientsLock.readLock().unlock();
-        }
+        });
     }
 }
